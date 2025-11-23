@@ -831,6 +831,7 @@ export default function IssueTracker() {
   const [isCreating, setIsCreating] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [clientStatusFilter, setClientStatusFilter] = useState(null);
 
   // API Data State
   const [apiUsers, setApiUsers] = useState([]);
@@ -1043,7 +1044,7 @@ export default function IssueTracker() {
           stakeholders: (esc.user_ids || []).map((u) => ({
             id: u.id,
             name: u.name,
-            isDecisionMaker: u.status === 'owner', // Determine based on status
+            isDecisionMaker: u.status === "owner", // Determine based on status
           })),
         }));
 
@@ -1106,14 +1107,24 @@ export default function IssueTracker() {
   };
 
   const handleStatusClick = (status) => {
-    const newStatusFilter = [status];
-    setFilterInputs((prev) => ({ ...prev, status: newStatusFilter }));
-    setAppliedFilters((prev) => ({ ...prev, status: newStatusFilter }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    if (clientStatusFilter === status) {
+      setClientStatusFilter(null); // Unselect
+    } else {
+      setClientStatusFilter(status); // Select
+    }
   };
 
-  // --- Status Summary Counts (Note: Client side count is inaccurate with server pagination, would ideally come from API stats) ---
-  const statusCounts = { Open: 0, "In Process": 0, Resolved: 0 };
+  // --- Status Summary Counts (Calculated dynamically from current page data) ---
+  const statusCounts = {
+    Open: issues.filter((i) => i.status === "Open").length,
+    "In Process": issues.filter((i) => i.status === "In Process").length,
+    Resolved: issues.filter((i) => i.status === "Resolved").length,
+  };
+
+  // Filter visible issues based on clientStatusFilter
+  const visibleIssues = clientStatusFilter
+    ? issues.filter((i) => i.status === clientStatusFilter)
+    : issues;
 
   // --- Actions ---
 
@@ -1324,7 +1335,12 @@ export default function IssueTracker() {
   const saveRemarksOnBlur = (layerId) => {
     const esc = editingIssue.escalations.find((e) => e.id === layerId);
     if (esc) {
-      handleUpdateEscalation(layerId, esc.status, esc.remarks, esc.stakeholders);
+      handleUpdateEscalation(
+        layerId,
+        esc.status,
+        esc.remarks,
+        esc.stakeholders
+      );
     }
   };
 
@@ -1720,9 +1736,7 @@ export default function IssueTracker() {
               bgClass = "bg-green-50/50";
               textClass = "text-green-700";
             }
-            const isSelected =
-              appliedFilters.status.includes(status) &&
-              appliedFilters.status.length === 1;
+            const isSelected = clientStatusFilter === status;
             return (
               <div
                 key={status}
@@ -1911,7 +1925,7 @@ export default function IssueTracker() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {issues.map((issue) => (
+              {visibleIssues.map((issue) => (
                 <tr
                   key={issue.id}
                   onClick={() => openViewModal(issue.id)}
@@ -1974,7 +1988,7 @@ export default function IssueTracker() {
                   </td>
                 </tr>
               ))}
-              {issues.length === 0 && (
+              {visibleIssues.length === 0 && (
                 <tr>
                   <td
                     colSpan={13}

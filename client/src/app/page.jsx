@@ -1040,10 +1040,10 @@ export default function IssueTracker() {
           layer: index + 1,
           status: esc.status === "DONE" ? "Done" : "Pending",
           remarks: esc.result_remarks || "",
-          stakeholders: (esc.user_ids || []).map((u, idx) => ({
+          stakeholders: (esc.user_ids || []).map((u) => ({
             id: u.id,
             name: u.name,
-            isDecisionMaker: idx === 0, // Assume first user is owner/decision maker for UI
+            isDecisionMaker: u.status === 'owner', // Determine based on status
           })),
         }));
 
@@ -1265,10 +1265,11 @@ export default function IssueTracker() {
     remarks,
     stakeholders
   ) => {
-    // Convert stakeholders array to expected user_ids payload format
+    // Convert stakeholders array to expected user_ids payload format with status
     const userIdsPayload = stakeholders.map((s) => ({
       id: s.id,
       name: s.name,
+      status: s.isDecisionMaker ? "owner" : "none",
     }));
 
     try {
@@ -1323,19 +1324,35 @@ export default function IssueTracker() {
   const saveRemarksOnBlur = (layerId) => {
     const esc = editingIssue.escalations.find((e) => e.id === layerId);
     if (esc) {
-      handleUpdateEscalation(
-        layerId,
-        esc.status,
-        esc.remarks,
-        esc.stakeholders
-      );
+      handleUpdateEscalation(layerId, esc.status, esc.remarks, esc.stakeholders);
     }
   };
 
-  const deleteEscalationLayer = (layerId) => {
-    alert(
-      "Deletion of escalation layers is not supported by the API at this time."
-    );
+  const deleteEscalationLayer = async (layerId) => {
+    if (!confirm("Delete this escalation layer?")) return;
+
+    try {
+      const res = await fetch(`${BASE_URL}/issues/escalations/delete`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: layerId }),
+      });
+
+      if (res.ok) {
+        setEditingIssue((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            escalations: prev.escalations.filter((e) => e.id !== layerId),
+          };
+        });
+      } else {
+        alert("Failed to delete escalation layer");
+      }
+    } catch (e) {
+      console.error("Error deleting escalation layer", e);
+      alert("Error deleting escalation layer");
+    }
   };
 
   const addStakeholder = (layerId, userObj) => {

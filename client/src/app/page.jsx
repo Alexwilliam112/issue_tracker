@@ -37,7 +37,7 @@ import {
   Square,
 } from "lucide-react";
 
-// --- Constants & Mock Data ---
+// --- Constants ---
 
 const STATUS_FLOW = ["Open", "In Process", "Resolved"];
 const ENVIRONMENTS = [
@@ -47,84 +47,16 @@ const ENVIRONMENTS = [
   "Disaster Recovery",
   "N/A",
 ];
+const BASE_URL = "https://api-officeless-dev.mekari.com/28208";
 
-const INITIAL_DATA = [
-  {
-    id: "1",
-    title: "Production Latency Spike in API Gateway",
-    status: "In Process",
-    stage: "Investigation",
-    created: new Date(Date.now() - 86400000 * 2).toISOString(),
+// --- Helper Functions ---
 
-    // New Fields
-    reportedBy: "Alice Engineer",
-    reportedAt: new Date(Date.now() - 86400000 * 2).toISOString().slice(0, 16),
-    environment: "Production",
-    project: "Alpha API",
-    issueType: "Incident",
-    assignee: "Bob Manager",
-
-    // Context
-    context: "Observed during peak load on Monday.",
-    problemStatement: "API response times increased by 400% causing timeouts.",
-    evidence: "Grafana dashboards screenshot attached (mock).",
-
-    // Risks
-    risks: ["SLA Breach", "Reputation Damage"],
-    riskScore: 15,
-
-    // Analysis
-    rootCauseCategory: "Capacity",
-    rootCause: "Insufficient connection pool settings for peak traffic.",
-
-    // Resolution
-    closedAt: "",
-
-    escalations: [
-      {
-        id: 101,
-        layer: 1,
-        stakeholders: [
-          { name: "Bob Manager", isDecisionMaker: true },
-          { name: "Alice Engineer", isDecisionMaker: false },
-        ],
-        status: "Done",
-        remarks: "Approved vertical scaling for 24h.",
-      },
-    ],
-    resolutions: [
-      {
-        id: 201,
-        solution: "Scale up AWS instances vertically",
-        pros: "Quick to implement",
-        cons: "High cost increase",
-        concerns: "Might hit quotas",
-        effort: 4, // Man-hours
-        isAgreed: false,
-      },
-    ],
-    comments: [
-      {
-        id: 301,
-        user: "Alice Engineer",
-        text: "I checked the logs, looks like database locking.",
-        timestamp: new Date().toISOString(),
-      },
-    ],
-    auditLog: [
-      {
-        id: 401,
-        action: "Issue Created",
-        timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-      },
-      {
-        id: 402,
-        action: "Status changed to In Process",
-        timestamp: new Date(Date.now() - 40000000).toISOString(),
-      },
-    ],
-  },
-];
+const toUnix = (dateString) =>
+  dateString ? Math.floor(new Date(dateString).getTime() / 1000) : null;
+const fromUnix = (timestamp) =>
+  timestamp ? new Date(timestamp * 1000).toISOString().slice(0, 16) : "";
+const fromUnixDate = (timestamp) =>
+  timestamp ? new Date(timestamp * 1000).toLocaleDateString() : "-";
 
 // --- Helper Components ---
 
@@ -234,7 +166,7 @@ const AutoTextArea = ({
   );
 };
 
-// --- Multi-Select Filter Component (Searchable) ---
+// --- Multi-Select Filter Component (Searchable & Object Support) ---
 
 const MultiSelectFilter = ({
   options,
@@ -243,6 +175,8 @@ const MultiSelectFilter = ({
   label,
   placeholder = "Filter...",
 }) => {
+  // options: { id: string, name: string }[]
+  // selected: string[] (IDs)
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [coords, setCoords] = useState({ top: 0, left: 0 });
@@ -262,7 +196,6 @@ const MultiSelectFilter = ({
     setIsOpen(!isOpen);
   };
 
-  // Auto-focus input when opened
   useEffect(() => {
     if (isOpen && inputRef.current) {
       inputRef.current.focus();
@@ -296,16 +229,21 @@ const MultiSelectFilter = ({
     };
   }, [isOpen]);
 
-  const toggleOption = (option) => {
-    if (selected.includes(option)) {
-      onChange(selected.filter((s) => s !== option));
+  const toggleOption = (id) => {
+    if (selected.includes(id)) {
+      onChange(selected.filter((s) => s !== id));
     } else {
-      onChange([...selected, option]);
+      onChange([...selected, id]);
     }
   };
 
-  const filteredOptions = options.filter((opt) =>
-    opt.toLowerCase().includes(searchTerm.toLowerCase())
+  // Normalize options to always have id and name (handle simple string arrays)
+  const normalizedOptions = options.map((opt) =>
+    typeof opt === "string" ? { id: opt, name: opt } : opt
+  );
+
+  const filteredOptions = normalizedOptions.filter((opt) =>
+    opt.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -365,16 +303,16 @@ const MultiSelectFilter = ({
               ) : (
                 filteredOptions.map((opt) => (
                   <button
-                    key={opt}
-                    onClick={() => toggleOption(opt)}
+                    key={opt.id}
+                    onClick={() => toggleOption(opt.id)}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700 transition-colors"
                   >
-                    {selected.includes(opt) ? (
+                    {selected.includes(opt.id) ? (
                       <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
                     ) : (
                       <Square className="w-4 h-4 text-slate-300 shrink-0" />
                     )}
-                    <span className="truncate">{opt}</span>
+                    <span className="truncate">{opt.name}</span>
                   </button>
                 ))
               )}
@@ -386,7 +324,7 @@ const MultiSelectFilter = ({
   );
 };
 
-// --- Searchable Single Select (Portal Based) ---
+// --- Searchable Single Select (Portal Based & Object Support) ---
 
 const SearchableSingleSelect = ({
   value,
@@ -397,6 +335,8 @@ const SearchableSingleSelect = ({
   icon: Icon,
   required,
 }) => {
+  // value: string (ID)
+  // options: { id: string, name: string }[]
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
@@ -417,14 +357,12 @@ const SearchableSingleSelect = ({
     setIsOpen(!isOpen);
   };
 
-  // Auto-focus input when opened
   useEffect(() => {
     if (isOpen && inputRef.current) {
       inputRef.current.focus();
     }
   }, [isOpen]);
 
-  // Close on click outside
   useEffect(() => {
     function handleClickOutside(event) {
       if (
@@ -436,7 +374,6 @@ const SearchableSingleSelect = ({
         setIsOpen(false);
       }
     }
-
     function handleScroll() {
       if (isOpen) setIsOpen(false);
     }
@@ -453,12 +390,17 @@ const SearchableSingleSelect = ({
     };
   }, [isOpen]);
 
-  const filtered = options.filter((opt) =>
-    opt.toLowerCase().includes(searchTerm.toLowerCase())
+  const normalizedOptions = options.map((opt) =>
+    typeof opt === "string" ? { id: opt, name: opt } : opt
   );
 
+  const filtered = normalizedOptions.filter((opt) =>
+    opt.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const selectedOption = normalizedOptions.find((opt) => opt.id === value);
+
   const handleSelect = (option) => {
-    onChange(option);
+    onChange(option.id);
     setIsOpen(false);
   };
 
@@ -479,8 +421,8 @@ const SearchableSingleSelect = ({
       >
         <div className="flex items-center gap-2 truncate">
           {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
-          <span className={!value ? "text-slate-400 font-normal" : ""}>
-            {value || placeholder}
+          <span className={!selectedOption ? "text-slate-400 font-normal" : ""}>
+            {selectedOption ? selectedOption.name : placeholder}
           </span>
         </div>
         <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
@@ -519,18 +461,18 @@ const SearchableSingleSelect = ({
               ) : (
                 filtered.map((opt) => (
                   <button
-                    key={opt}
+                    key={opt.id}
                     onClick={() => handleSelect(opt)}
                     className={`w-full text-left px-3 py-2 text-sm rounded flex items-center justify-between group
                                         ${
-                                          value === opt
+                                          value === opt.id
                                             ? "bg-indigo-50 text-indigo-700 font-bold"
                                             : "text-slate-700 hover:bg-slate-50"
                                         }
                                     `}
                   >
-                    <span>{opt}</span>
-                    {value === opt && (
+                    <span>{opt.name}</span>
+                    {value === opt.id && (
                       <CheckCircle2 className="w-3.5 h-3.5 text-indigo-500" />
                     )}
                   </button>
@@ -544,8 +486,9 @@ const SearchableSingleSelect = ({
   );
 };
 
-// --- Searchable User Select ---
+// --- Searchable User Select (For Stakeholders) ---
 const UserSearchSelect = ({ availableUsers, onAdd }) => {
+  // availableUsers: {id, name}[]
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [coords, setCoords] = useState({ top: 0, left: 0 });
@@ -599,11 +542,11 @@ const UserSearchSelect = ({ availableUsers, onAdd }) => {
   }, [isOpen]);
 
   const filtered = availableUsers.filter((u) =>
-    u.toLowerCase().includes(searchTerm.toLowerCase())
+    u.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleAdd = (user) => {
-    onAdd(user);
+    onAdd(user.name); // Keeping logic simple for now (storing name for stakeholders), ideally ID
     setSearchTerm("");
     inputRef.current?.focus();
   };
@@ -651,11 +594,11 @@ const UserSearchSelect = ({ availableUsers, onAdd }) => {
               ) : (
                 filtered.map((user) => (
                   <button
-                    key={user}
+                    key={user.id}
                     onClick={() => handleAdd(user)}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 rounded text-slate-700 flex items-center justify-between group"
                   >
-                    <span>{user}</span>
+                    <span>{user.name}</span>
                     <Plus className="w-3 h-3 opacity-0 group-hover:opacity-100 text-indigo-500" />
                   </button>
                 ))
@@ -671,6 +614,9 @@ const UserSearchSelect = ({ availableUsers, onAdd }) => {
 // --- Risk Multi-Select Component (Updated with Search & Dynamic Options) ---
 
 const RisksInput = ({ selectedRisks = [], onChange, options = [] }) => {
+  // selectedRisks: string[] (IDs)
+  // options: { id, name, score }[]
+
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
@@ -729,19 +675,21 @@ const RisksInput = ({ selectedRisks = [], onChange, options = [] }) => {
 
   const available = options.filter(
     (r) =>
-      !selectedRisks.includes(r) &&
-      r.toLowerCase().includes(searchTerm.toLowerCase())
+      !selectedRisks.includes(r.id) &&
+      r.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const addRisk = (risk) => {
-    onChange([...selectedRisks, risk]);
+  const addRisk = (riskId) => {
+    onChange([...selectedRisks, riskId]);
     setSearchTerm("");
     inputRef.current?.focus();
   };
 
-  const removeRisk = (risk) => {
-    onChange(selectedRisks.filter((r) => r !== risk));
+  const removeRisk = (riskId) => {
+    onChange(selectedRisks.filter((r) => r !== riskId));
   };
+
+  const getRiskName = (id) => options.find((o) => o.id === id)?.name || id;
 
   return (
     <div className="relative" ref={wrapperRef}>
@@ -755,17 +703,17 @@ const RisksInput = ({ selectedRisks = [], onChange, options = [] }) => {
         {selectedRisks.length === 0 && (
           <span className="text-sm text-slate-400 p-1">No risks selected</span>
         )}
-        {selectedRisks.map((risk) => (
+        {selectedRisks.map((riskId) => (
           <span
-            key={risk}
+            key={riskId}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-red-50 text-red-700 border border-red-100"
           >
-            {risk}
+            {getRiskName(riskId)}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                removeRisk(risk);
+                removeRisk(riskId);
               }}
               className="hover:bg-red-200 rounded-full p-0.5 transition-colors"
             >
@@ -811,12 +759,12 @@ const RisksInput = ({ selectedRisks = [], onChange, options = [] }) => {
               ) : (
                 available.map((risk) => (
                   <button
-                    key={risk}
+                    key={risk.id}
                     type="button"
-                    onClick={() => addRisk(risk)}
+                    onClick={() => addRisk(risk.id)}
                     className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group text-slate-700 transition-colors"
                   >
-                    {risk}
+                    {risk.name}
                     <Plus className="w-3 h-3 opacity-0 group-hover:opacity-100 text-indigo-500" />
                   </button>
                 ))
@@ -873,7 +821,8 @@ const Modal = ({ isOpen, onClose, title, children, footer }) => {
 // --- Main Application ---
 
 export default function IssueTracker() {
-  const [issues, setIssues] = useState(INITIAL_DATA);
+  const [issues, setIssues] = useState([]);
+  const [totalData, setTotalData] = useState(0);
   const [activeTab, setActiveTab] = useState("overview");
   const [editingIssue, setEditingIssue] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -889,12 +838,9 @@ export default function IssueTracker() {
   const [apiRootCauseCats, setApiRootCauseCats] = useState([]);
 
   // Derived options for UI (names)
-  const userOptions = apiUsers.map((u) => u.name);
-  const riskOptions = apiRisks.map((r) => r.name);
-  const projectOptions = apiProjects.map((p) => p.name);
-  const issueTypeOptions = apiIssueTypes.map((t) => t.name);
-  const issueStageOptions = apiIssueStages.map((s) => s.name);
-  const rootCauseOptions = apiRootCauseCats.map((c) => c.name);
+  const userOptions = apiUsers.map((u) => ({ id: u.id, name: u.name }));
+  // Note: Filter components expect array of objects {id, name} for full object usage or just strings.
+  // We will pass the full objects to the filter components.
 
   // Filters State
   const defaultFilters = {
@@ -917,95 +863,170 @@ export default function IssueTracker() {
   const [appliedFilters, setAppliedFilters] = useState(defaultFilters); // Applied state
   const [pagination, setPagination] = useState({ page: 1, limit: 100 });
 
-  // Fetch API Data
+  // Fetch Master Data
   useEffect(() => {
     const fetchMasterData = async () => {
       try {
-        // 1. Users
-        const usersRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/master_user/index?search="
+        const [users, risks, projects, types, stages, cats] = await Promise.all(
+          [
+            fetch(`${BASE_URL}/master_user/index?search=`).then((r) =>
+              r.json()
+            ),
+            fetch(`${BASE_URL}/risk_matrix/index?search=`).then((r) =>
+              r.json()
+            ),
+            fetch(`${BASE_URL}/projects/index?search=`).then((r) => r.json()),
+            fetch(`${BASE_URL}/master_issue_type/index`).then((r) => r.json()),
+            fetch(`${BASE_URL}/master_issue_stage/index`).then((r) => r.json()),
+            fetch(`${BASE_URL}/master_root_cause_category/index`).then((r) =>
+              r.json()
+            ),
+          ]
         );
-        const usersJson = await usersRes.json();
-        if (usersJson.code === 200 && Array.isArray(usersJson.data)) {
-          setApiUsers(usersJson.data);
-        }
 
-        // 2. Risks
-        const risksRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/risk_matrix/index?search="
-        );
-        const risksJson = await risksRes.json();
-        if (risksJson.code === 200 && Array.isArray(risksJson.data)) {
-          setApiRisks(risksJson.data);
-        }
-
-        // 3. Projects
-        const projectsRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/projects/index?search="
-        );
-        const projectsJson = await projectsRes.json();
-        if (projectsJson.code === 200 && Array.isArray(projectsJson.data)) {
-          setApiProjects(projectsJson.data);
-        }
-
-        // 4. Issue Types
-        const issueTypesRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/master_issue_type/index"
-        );
-        const issueTypesJson = await issueTypesRes.json();
-        if (issueTypesJson.code === 200 && Array.isArray(issueTypesJson.data)) {
-          setApiIssueTypes(issueTypesJson.data);
-        }
-
-        // 5. Issue Stages
-        const issueStagesRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/master_issue_stage/index"
-        );
-        const issueStagesJson = await issueStagesRes.json();
-        if (
-          issueStagesJson.code === 200 &&
-          Array.isArray(issueStagesJson.data)
-        ) {
-          setApiIssueStages(issueStagesJson.data);
-        }
-
-        // 6. Root Cause Categories
-        const rootCauseRes = await fetch(
-          "https://api-officeless-dev.mekari.com/28208/master_root_cause_category/index"
-        );
-        const rootCauseJson = await rootCauseRes.json();
-        if (rootCauseJson.code === 200 && Array.isArray(rootCauseJson.data)) {
-          setApiRootCauseCats(rootCauseJson.data);
-        }
+        if (users.code === 200)
+          setApiUsers(users.data.map((u) => ({ id: u.ids, name: u.name })));
+        if (risks.code === 200)
+          setApiRisks(
+            risks.data.map((r) => ({ id: r.ids, name: r.name, score: r.score }))
+          );
+        if (projects.code === 200)
+          setApiProjects(
+            projects.data.map((p) => ({ id: p.ids, name: p.name }))
+          );
+        if (types.code === 200)
+          setApiIssueTypes(
+            types.data.map((t) => ({ id: t.ids, name: t.name }))
+          );
+        if (stages.code === 200)
+          setApiIssueStages(
+            stages.data.map((s) => ({ id: s.ids, name: s.name }))
+          );
+        if (cats.code === 200)
+          setApiRootCauseCats(
+            cats.data.map((c) => ({ id: c.ids, name: c.name }))
+          );
       } catch (err) {
         console.error("Failed to fetch master data:", err);
       }
     };
-
     fetchMasterData();
-  }, []);
-
-  // Hydration fix & Load data
-  useEffect(() => {
     setIsMounted(true);
-    const saved = localStorage.getItem("issueTrackerData");
-    if (saved) {
-      try {
-        setIssues(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse local storage", e);
-      }
-    }
   }, []);
 
-  // Save data
-  useEffect(() => {
-    if (isMounted && issues.length > 0) {
-      localStorage.setItem("issueTrackerData", JSON.stringify(issues));
-    }
-  }, [issues, isMounted]);
+  // Fetch Issues (Server Side Filtering)
+  const fetchIssues = async () => {
+    try {
+      const params = new URLSearchParams();
+      params.append("search", searchTerm);
+      params.append("page", pagination.page.toString());
+      params.append("limit", pagination.limit.toString());
 
-  // Prevent rendering until client-side hydration is complete to match localStorage
+      if (appliedFilters.project.length)
+        params.append("project_ids", appliedFilters.project.join(","));
+      if (appliedFilters.environment.length)
+        params.append("environment", appliedFilters.environment.join(","));
+      if (appliedFilters.issueType.length)
+        params.append("issue_type_ids", appliedFilters.issueType.join(","));
+      if (appliedFilters.stage.length)
+        params.append("issue_stage_ids", appliedFilters.stage.join(","));
+      if (appliedFilters.rootCause.length)
+        params.append(
+          "root_cause_category_ids",
+          appliedFilters.rootCause.join(",")
+        );
+      if (appliedFilters.risks.length)
+        params.append("risk_ids", appliedFilters.risks.join(","));
+      if (appliedFilters.status.length)
+        params.append("status", appliedFilters.status.join(","));
+      if (appliedFilters.assignees.length)
+        params.append("assignee_ids", appliedFilters.assignees.join(","));
+
+      if (appliedFilters.startDate)
+        params.append(
+          "reported_start_date",
+          toUnix(appliedFilters.startDate).toString()
+        );
+      if (appliedFilters.endDate)
+        params.append(
+          "reported_end_date",
+          toUnix(appliedFilters.endDate).toString()
+        );
+      if (appliedFilters.resolvedStartDate)
+        params.append(
+          "resolved_start_date",
+          toUnix(appliedFilters.resolvedStartDate).toString()
+        );
+      if (appliedFilters.resolvedEndDate)
+        params.append(
+          "resolved_end_date",
+          toUnix(appliedFilters.resolvedEndDate).toString()
+        );
+
+      const res = await fetch(`${BASE_URL}/issues/index?${params.toString()}`);
+      const json = await res.json();
+
+      if (json.code === 200) {
+        const mappedIssues = json.data.map((apiIssue) => ({
+          id: apiIssue.ids, // Use string ID from API
+          title: apiIssue.name,
+          status: apiIssue.status,
+          // Map object responses to IDs for internal logic, but store full objects if needed for display?
+          // For simplicity, we map to what UI expects (IDs for editing, but we need Names for table).
+          // Strategy: Store Object for Table, use IDs for edit form.
+          // Actually, the table just needs strings.
+          project: apiIssue.project_id?.name || "",
+          projectId: apiIssue.project_id?.id,
+
+          environment: apiIssue.environment,
+
+          issueType: apiIssue.issue_type_id?.name || "",
+          issueTypeId: apiIssue.issue_type_id?.id,
+
+          assignee: apiIssue.assignee_id?.name || "",
+          assigneeId: apiIssue.assignee_id?.id,
+
+          stage: apiIssue.issue_stage_id?.name || "",
+          stageId: apiIssue.issue_stage_id?.id,
+
+          rootCauseCategory: apiIssue.root_cause_category_id?.name || "",
+          rootCauseCategoryId: apiIssue.root_cause_category_id?.id,
+
+          rootCause: apiIssue.root_cause_detail,
+
+          risks: apiIssue.risk_ids ? apiIssue.risk_ids.map((r) => r.id) : [], // IDs for internal logic
+          riskNames: apiIssue.risk_ids
+            ? apiIssue.risk_ids.map((r) => r.name)
+            : [], // Display
+          riskScore: apiIssue.risk_score,
+
+          reportedBy: apiIssue.reported_by,
+          reportedAt: fromUnix(apiIssue.reported_at), // Convert to ISO for input
+          closedAt: fromUnix(apiIssue.closed_at),
+
+          context: apiIssue.context,
+          problemStatement: apiIssue.problem,
+          evidence: apiIssue.troubleshooting_log,
+
+          // Nested data (stubbed for now as API list doesn't return full detail)
+          escalations: [],
+          resolutions: [],
+          comments: [],
+          auditLog: [],
+        }));
+        setIssues(mappedIssues);
+        setTotalData(json.pagination?.total_data || 0);
+      }
+    } catch (err) {
+      console.error("Failed to fetch issues", err);
+    }
+  };
+
+  // Trigger Fetch
+  useEffect(() => {
+    if (isMounted) fetchIssues();
+  }, [isMounted, pagination, appliedFilters, searchTerm]);
+
   if (!isMounted) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -1017,90 +1038,8 @@ export default function IssueTracker() {
     );
   }
 
-  // --- Filter Logic ---
-  const filteredIssues = issues.filter((i) => {
-    // 1. Text Search (Live)
-    const searchMatch =
-      i.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      i.id.includes(searchTerm) ||
-      i.project?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    // 2. Multi-Selects (Applied)
-    const projectMatch =
-      appliedFilters.project.length === 0 ||
-      appliedFilters.project.includes(i.project);
-    const envMatch =
-      appliedFilters.environment.length === 0 ||
-      appliedFilters.environment.includes(i.environment);
-    const typeMatch =
-      appliedFilters.issueType.length === 0 ||
-      appliedFilters.issueType.includes(i.issueType);
-    const statusMatch =
-      appliedFilters.status.length === 0 ||
-      appliedFilters.status.includes(i.status);
-    const stageMatch =
-      appliedFilters.stage.length === 0 ||
-      appliedFilters.stage.includes(i.stage);
-    const rootMatch =
-      appliedFilters.rootCause.length === 0 ||
-      appliedFilters.rootCause.includes(i.rootCauseCategory);
-
-    // New filters
-    const riskMatch =
-      appliedFilters.risks.length === 0 ||
-      (i.risks && i.risks.some((r) => appliedFilters.risks.includes(r)));
-    const assigneeMatch =
-      appliedFilters.assignees.length === 0 ||
-      appliedFilters.assignees.includes(i.assignee);
-
-    // 3. Date Range (Applied)
-    let dateMatch = true;
-    if (appliedFilters.startDate) {
-      dateMatch =
-        dateMatch &&
-        new Date(i.reportedAt) >= new Date(appliedFilters.startDate);
-    }
-    if (appliedFilters.endDate) {
-      dateMatch =
-        dateMatch && new Date(i.reportedAt) <= new Date(appliedFilters.endDate);
-    }
-
-    // Resolved Date Range
-    let resolvedDateMatch = true;
-    if (appliedFilters.resolvedStartDate) {
-      resolvedDateMatch =
-        resolvedDateMatch &&
-        i.closedAt &&
-        new Date(i.closedAt) >= new Date(appliedFilters.resolvedStartDate);
-    }
-    if (appliedFilters.resolvedEndDate) {
-      resolvedDateMatch =
-        resolvedDateMatch &&
-        i.closedAt &&
-        new Date(i.closedAt) <= new Date(appliedFilters.resolvedEndDate);
-    }
-
-    return (
-      searchMatch &&
-      projectMatch &&
-      envMatch &&
-      typeMatch &&
-      statusMatch &&
-      stageMatch &&
-      rootMatch &&
-      riskMatch &&
-      assigneeMatch &&
-      dateMatch &&
-      resolvedDateMatch
-    );
-  });
-
   // --- Pagination Logic ---
-  const totalPages = Math.ceil(filteredIssues.length / pagination.limit);
-  const paginatedIssues = filteredIssues.slice(
-    (pagination.page - 1) * pagination.limit,
-    pagination.page * pagination.limit
-  );
+  const totalPages = Math.ceil(totalData / pagination.limit);
 
   const updateFilterInput = (key, value) => {
     setFilterInputs((prev) => ({ ...prev, [key]: value }));
@@ -1134,115 +1073,18 @@ export default function IssueTracker() {
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
-  // --- Status Summary Counts ---
-  const getStatusCounts = () => {
-    const counts = { Open: 0, "In Process": 0, Resolved: 0 };
-    filteredIssues.forEach((i) => {
-      if (counts[i.status] !== undefined) counts[i.status]++;
-    });
-    return counts;
-  };
-  const statusCounts = getStatusCounts();
-
-  // --- CSV Export ---
-  const exportToCSV = () => {
-    if (filteredIssues.length === 0) return;
-
-    // Define headers
-    const headers = [
-      "ID",
-      "Title",
-      "Status",
-      "Stage",
-      "Project",
-      "Environment",
-      "Issue Type",
-      "Reported By",
-      "Reported At",
-      "Risk Score",
-      "Risks",
-      "Assignee",
-      "Context",
-      "Problem Statement",
-      "Evidence",
-      "Root Cause Category",
-      "Root Cause Detail",
-      "Latest Escalation Layer",
-      "Latest Escalation Status",
-      "Latest Escalation Remarks",
-      "Agreed Resolution (Solution)",
-      "Agreed Resolution (Effort)",
-      "Closed At",
-    ];
-
-    // Map data to rows
-    const rows = filteredIssues.map((issue) => {
-      const latestEscalation =
-        issue.escalations.length > 0
-          ? issue.escalations[issue.escalations.length - 1]
-          : null;
-      const agreedResolution = issue.resolutions.find((r) => r.isAgreed);
-
-      return [
-        issue.id,
-        `"${(issue.title || "").replace(/"/g, '""')}"`,
-        issue.status,
-        issue.stage || "",
-        issue.project,
-        issue.environment,
-        issue.issueType,
-        issue.reportedBy,
-        new Date(issue.reportedAt).toLocaleString(),
-        issue.riskScore,
-        `"${(issue.risks || []).join(", ")}"`,
-        issue.assignee,
-        `"${(issue.context || "").replace(/"/g, '""')}"`,
-        `"${(issue.problemStatement || "").replace(/"/g, '""')}"`,
-        `"${(issue.evidence || "").replace(/"/g, '""')}"`,
-        issue.rootCauseCategory,
-        `"${(issue.rootCause || "").replace(/"/g, '""')}"`,
-        latestEscalation ? latestEscalation.layer : "N/A",
-        latestEscalation ? latestEscalation.status : "N/A",
-        latestEscalation
-          ? `"${(latestEscalation.remarks || "").replace(/"/g, '""')}"`
-          : "N/A",
-        agreedResolution
-          ? `"${agreedResolution.solution.replace(/"/g, '""')}"`
-          : "N/A",
-        agreedResolution ? agreedResolution.effort : "0",
-        issue.closedAt ? new Date(issue.closedAt).toLocaleString() : "",
-      ];
-    });
-
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(","),
-      ...rows.map((row) => row.join(",")),
-    ].join("\n");
-
-    // Create a blob and trigger download
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `IssueTracker_Export_${new Date().toISOString().slice(0, 10)}.csv`
-    );
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  // --- Status Summary Counts (Note: Client side count is inaccurate with server pagination, would ideally come from API stats) ---
+  // For now, we just count what's visible or leave as 0 if not provided by API summary endpoint
+  const statusCounts = { Open: 0, "In Process": 0, Resolved: 0 };
 
   // --- Actions ---
 
   const validateIssue = (issue) => {
     const required = [
       "title",
-      "project",
+      "projectId",
       "environment",
-      "issueType",
+      "issueTypeId",
       "reportedBy",
       "reportedAt",
       "context",
@@ -1252,46 +1094,109 @@ export default function IssueTracker() {
     return missing;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingIssue) return;
 
     const missingFields = validateIssue(editingIssue);
     if (missingFields.length > 0) {
-      alert(`Please fill in all mandatory fields: ${missingFields.join(", ")}`);
+      alert(
+        `Please fill in all mandatory fields. Missing: ${missingFields.join(
+          ", "
+        )}`
+      );
       return;
     }
 
-    if (isCreating) {
-      const newId = Date.now().toString();
-      const finalIssue = {
-        ...editingIssue,
-        id: newId,
-        created: new Date().toISOString(),
-        auditLog: editingIssue.auditLog.map((log) => ({
-          ...log,
-          timestamp: new Date().toISOString(),
-        })),
-      };
-      setIssues([finalIssue, ...issues]);
-    } else {
-      setIssues((prev) =>
-        prev.map((i) => (i.id === editingIssue.id ? editingIssue : i))
-      );
+    // Helper to find the full object from the ID for the payload
+    const getObjPayload = (sourceArray, id) => {
+      const found = sourceArray.find((item) => item.id === id);
+      return found ? { id: found.id, name: found.name } : null;
+    };
+
+    // Helper to map Risk IDs to full Risk objects
+    const getRiskPayload = (riskIds) => {
+      return riskIds
+        .map((id) => {
+          const found = apiRisks.find((r) => r.id === id);
+          return found
+            ? { id: found.id, name: found.name, score: found.score }
+            : null;
+        })
+        .filter(Boolean);
+    };
+
+    const payload = {
+      name: editingIssue.title,
+      project_id: getObjPayload(apiProjects, editingIssue.projectId),
+      environment: editingIssue.environment,
+      issue_type_id: getObjPayload(apiIssueTypes, editingIssue.issueTypeId),
+      reported_by: editingIssue.reportedBy,
+      reported_at: toUnix(editingIssue.reportedAt),
+      assignee_id: getObjPayload(apiUsers, editingIssue.assigneeId),
+      context: editingIssue.context,
+      problem: editingIssue.problemStatement,
+      status: editingIssue.status,
+      issue_stage_id: getObjPayload(apiIssueStages, editingIssue.stageId),
+      risk_ids: getRiskPayload(editingIssue.risks),
+      risk_score: editingIssue.riskScore,
+      closed_at: toUnix(editingIssue.closedAt),
+      troubleshooting_log: editingIssue.evidence,
+      root_cause_category_id: getObjPayload(
+        apiRootCauseCats,
+        editingIssue.rootCauseCategoryId
+      ),
+      root_cause_detail: editingIssue.rootCause,
+    };
+
+    try {
+      if (isCreating) {
+        const res = await fetch(`${BASE_URL}/issues/create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) fetchIssues();
+      } else {
+        const res = await fetch(
+          `${BASE_URL}/issues/update?id_issue=${editingIssue.id}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+        if (res.ok) fetchIssues();
+      }
+      closeModal();
+    } catch (e) {
+      alert("Failed to save issue");
+      console.error(e);
     }
-    closeModal();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!editingIssue) return;
     if (
       confirm(
         "Are you sure you want to delete this issue? This action cannot be undone."
       )
     ) {
-      setIssues((prev) => prev.filter((i) => i.id !== editingIssue.id));
-      closeModal();
+      try {
+        await fetch(`${BASE_URL}/issues/delete`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editingIssue.id }),
+        });
+        fetchIssues();
+        closeModal();
+      } catch (e) {
+        alert("Failed to delete");
+      }
     }
   };
+
+  // --- Nested Tab Handlers (Escalation, Resolution, Comments) ---
+  // Currently client-side only as requested, will reset on refresh until backend supports them.
 
   const addEscalationLayer = () => {
     if (!editingIssue) return;
@@ -1307,126 +1212,6 @@ export default function IssueTracker() {
       prev ? { ...prev, escalations: [...prev.escalations, newLayer] } : null
     );
   };
-
-  const deleteEscalationLayer = (layerId) => {
-    if (!confirm("Delete this escalation layer?")) return;
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.filter((e) => e.id !== layerId),
-      };
-    });
-  };
-
-  const deleteResolution = (resId) => {
-    if (!confirm("Delete this resolution proposal?")) return;
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        resolutions: prev.resolutions.filter((r) => r.id !== resId),
-      };
-    });
-  };
-
-  // --- Edit Actions (Applied to `editingIssue`) ---
-
-  const updateDraftField = (field, value) => {
-    setEditingIssue((prev) => (prev ? { ...prev, [field]: value } : null));
-  };
-
-  const updateRisks = (newRisks) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      // Calculate new total score using API data
-      const totalScore = newRisks.reduce((acc, riskName) => {
-        const riskObj = apiRisks.find((r) => r.name === riskName);
-        return acc + (riskObj ? riskObj.score || 0 : 0);
-      }, 0);
-
-      return { ...prev, risks: newRisks, riskScore: totalScore };
-    });
-  };
-
-  const addDraftAuditLog = (action) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        auditLog: [
-          ...prev.auditLog,
-          { id: Date.now(), action, timestamp: new Date().toISOString() },
-        ],
-      };
-    });
-  };
-
-  const updateStatus = (newStatus) => {
-    updateDraftField("status", newStatus);
-    addDraftAuditLog(`Status changed to ${newStatus}`);
-  };
-
-  const updateStage = (newStage) => {
-    updateDraftField("stage", newStage);
-    addDraftAuditLog(`Stage changed to ${newStage}`);
-  };
-
-  const openCreateModal = () => {
-    const blankIssue = {
-      id: "new",
-      title: "",
-      status: "Open",
-      stage: "Triage",
-      created: new Date().toISOString(),
-      // New Field Defaults
-      reportedBy: "",
-      reportedAt: new Date().toISOString().slice(0, 16), // format for datetime-local
-      environment: "Development",
-      project: "",
-      issueType: "Bug",
-      rootCauseCategory: "",
-      rootCause: "",
-      assignee: "",
-      closedAt: "",
-      risks: [],
-      riskScore: 0,
-      // Standard Fields
-      context: "",
-      problemStatement: "",
-      evidence: "",
-      escalations: [],
-      resolutions: [],
-      comments: [],
-      auditLog: [
-        {
-          id: Date.now(),
-          action: "Draft Started",
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
-
-    setEditingIssue(blankIssue);
-    setIsCreating(true);
-    setActiveTab("overview");
-  };
-
-  const openViewModal = (id) => {
-    const issueToEdit = issues.find((i) => i.id === id);
-    if (issueToEdit) {
-      setEditingIssue(JSON.parse(JSON.stringify(issueToEdit)));
-      setIsCreating(false);
-      setActiveTab("overview");
-    }
-  };
-
-  const closeModal = () => {
-    setEditingIssue(null);
-    setIsCreating(false);
-  };
-
-  // --- Sub Components Logic (Safe Guards) ---
 
   const updateEscalationStatus = (layerId, newStatus) => {
     setEditingIssue((prev) => {
@@ -1448,6 +1233,17 @@ export default function IssueTracker() {
         escalations: prev.escalations.map((e) =>
           e.id === layerId ? { ...e, remarks: newRemarks } : e
         ),
+      };
+    });
+  };
+
+  const deleteEscalationLayer = (layerId) => {
+    if (!confirm("Delete this escalation layer?")) return;
+    setEditingIssue((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        escalations: prev.escalations.filter((e) => e.id !== layerId),
       };
     });
   };
@@ -1553,6 +1349,17 @@ export default function IssueTracker() {
     });
   };
 
+  const deleteResolution = (resId) => {
+    if (!confirm("Delete this resolution proposal?")) return;
+    setEditingIssue((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        resolutions: prev.resolutions.filter((r) => r.id !== resId),
+      };
+    });
+  };
+
   const addComment = (e) => {
     e.preventDefault();
     if (!editingIssue) return;
@@ -1577,8 +1384,169 @@ export default function IssueTracker() {
     e.target.reset();
   };
 
+  // --- Edit Actions (Applied to `editingIssue`) ---
+
+  const updateDraftField = (field, value) => {
+    setEditingIssue((prev) => (prev ? { ...prev, [field]: value } : null));
+  };
+
+  const updateRisks = (newRisks) => {
+    setEditingIssue((prev) => {
+      if (!prev) return null;
+      const totalScore = newRisks.reduce((acc, riskId) => {
+        const riskObj = apiRisks.find((r) => r.id === riskId);
+        return acc + (riskObj ? riskObj.score || 0 : 0);
+      }, 0);
+      return { ...prev, risks: newRisks, riskScore: totalScore };
+    });
+  };
+
+  const updateStatus = (newStatus) => {
+    updateDraftField("status", newStatus);
+  };
+
+  const updateStage = (newStageId) => {
+    const stageName = apiIssueStages.find((s) => s.id === newStageId)?.name;
+    setEditingIssue((prev) =>
+      prev ? { ...prev, stageId: newStageId, stage: stageName } : null
+    );
+  };
+
+  const openCreateModal = () => {
+    const blankIssue = {
+      id: "new",
+      title: "",
+      status: "Open",
+      stage: "Triage",
+      stageId: apiIssueStages.find((s) => s.name === "Triage")?.id || "",
+      created: new Date().toISOString(),
+      reportedBy: "",
+      reportedAt: new Date().toISOString().slice(0, 16),
+      environment: "Development",
+      project: "",
+      projectId: "",
+      issueType: "",
+      issueTypeId: "",
+      rootCauseCategory: "",
+      rootCauseCategoryId: "",
+      rootCause: "",
+      assignee: "",
+      assigneeId: "",
+      closedAt: "",
+      risks: [],
+      riskScore: 0,
+      context: "",
+      problemStatement: "",
+      evidence: "",
+      escalations: [],
+      resolutions: [],
+      comments: [],
+      auditLog: [],
+    };
+
+    setEditingIssue(blankIssue);
+    setIsCreating(true);
+    setActiveTab("overview");
+  };
+
+  const openViewModal = (id) => {
+    const issueToEdit = issues.find((i) => i.id === id);
+    if (issueToEdit) {
+      setEditingIssue(JSON.parse(JSON.stringify(issueToEdit)));
+      setIsCreating(false);
+      setActiveTab("overview");
+    }
+  };
+
+  const closeModal = () => {
+    setEditingIssue(null);
+    setIsCreating(false);
+  };
+
   const visibleTabs = ["overview", "escalations", "resolutions"];
   if (!isCreating) visibleTabs.push("history");
+
+  // ... Export Logic ...
+  const exportToCSV = () => {
+    if (issues.length === 0) return;
+    const headers = [
+      "ID",
+      "Title",
+      "Status",
+      "Stage",
+      "Project",
+      "Environment",
+      "Issue Type",
+      "Reported By",
+      "Reported At",
+      "Risk Score",
+      "Risks",
+      "Assignee",
+      "Context",
+      "Problem Statement",
+      "Evidence",
+      "Root Cause Category",
+      "Root Cause Detail",
+      "Latest Escalation Layer",
+      "Latest Escalation Status",
+      "Latest Escalation Remarks",
+      "Agreed Resolution (Solution)",
+      "Agreed Resolution (Effort)",
+      "Closed At",
+    ];
+    const rows = issues.map((issue) => {
+      const latestEscalation =
+        issue.escalations.length > 0
+          ? issue.escalations[issue.escalations.length - 1]
+          : null;
+      const agreedResolution = issue.resolutions.find((r) => r.isAgreed);
+      return [
+        issue.id,
+        `"${(issue.title || "").replace(/"/g, '""')}"`,
+        issue.status,
+        issue.stage || "",
+        issue.project,
+        issue.environment,
+        issue.issueType,
+        issue.reportedBy,
+        new Date(issue.reportedAt).toLocaleString(),
+        issue.riskScore,
+        `"${(issue.risks || []).join(", ")}"`,
+        issue.assignee,
+        `"${(issue.context || "").replace(/"/g, '""')}"`,
+        `"${(issue.problemStatement || "").replace(/"/g, '""')}"`,
+        `"${(issue.evidence || "").replace(/"/g, '""')}"`,
+        issue.rootCauseCategory,
+        `"${(issue.rootCause || "").replace(/"/g, '""')}"`,
+        latestEscalation ? latestEscalation.layer : "N/A",
+        latestEscalation ? latestEscalation.status : "N/A",
+        latestEscalation
+          ? `"${(latestEscalation.remarks || "").replace(/"/g, '""')}"`
+          : "N/A",
+        agreedResolution
+          ? `"${agreedResolution.solution.replace(/"/g, '""')}"`
+          : "N/A",
+        agreedResolution ? agreedResolution.effort : "0",
+        issue.closedAt ? new Date(issue.closedAt).toLocaleString() : "",
+      ];
+    });
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => row.join(",")),
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `IssueTracker_Export_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 p-2 md:p-4">
@@ -1618,7 +1586,6 @@ export default function IssueTracker() {
             let borderClass = "border-slate-200";
             let bgClass = "bg-white";
             let textClass = "text-slate-700";
-
             if (status === "Open") {
               borderClass = "border-blue-200";
               bgClass = "bg-blue-50/50";
@@ -1634,23 +1601,16 @@ export default function IssueTracker() {
               bgClass = "bg-green-50/50";
               textClass = "text-green-700";
             }
-
             const isSelected =
               appliedFilters.status.includes(status) &&
               appliedFilters.status.length === 1;
-
             return (
               <div
                 key={status}
                 onClick={() => handleStatusClick(status)}
-                className={`p-4 rounded-xl border cursor-pointer transition-all hover:scale-[1.02] shadow-sm flex flex-col justify-between h-24
-                            ${borderClass} ${bgClass} 
-                            ${
-                              isSelected
-                                ? "ring-2 ring-offset-2 ring-indigo-500"
-                                : ""
-                            }
-                        `}
+                className={`p-4 rounded-xl border cursor-pointer transition-all hover:scale-[1.02] shadow-sm flex flex-col justify-between h-24 ${borderClass} ${bgClass} ${
+                  isSelected ? "ring-2 ring-offset-2 ring-indigo-500" : ""
+                }`}
               >
                 <span
                   className={`text-xs font-bold uppercase tracking-wider ${textClass}`}
@@ -1691,30 +1651,6 @@ export default function IssueTracker() {
               }`}
             >
               <Filter className="w-4 h-4" /> Filters
-              {appliedFilters.project.length +
-                appliedFilters.environment.length +
-                appliedFilters.issueType.length +
-                appliedFilters.status.length +
-                appliedFilters.stage.length +
-                appliedFilters.rootCause.length +
-                appliedFilters.risks.length +
-                appliedFilters.assignees.length +
-                (appliedFilters.startDate ? 1 : 0) +
-                (appliedFilters.resolvedStartDate ? 1 : 0) >
-                0 && (
-                <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                  {appliedFilters.project.length +
-                    appliedFilters.environment.length +
-                    appliedFilters.issueType.length +
-                    appliedFilters.status.length +
-                    appliedFilters.stage.length +
-                    appliedFilters.rootCause.length +
-                    appliedFilters.risks.length +
-                    appliedFilters.assignees.length +
-                    (appliedFilters.startDate ? 1 : 0) +
-                    (appliedFilters.resolvedStartDate ? 1 : 0)}
-                </span>
-              )}
             </button>
           </div>
 
@@ -1723,49 +1659,49 @@ export default function IssueTracker() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <MultiSelectFilter
                   label="Project"
-                  options={projectOptions}
+                  options={apiProjects}
                   selected={filterInputs.project}
                   onChange={(v) => updateFilterInput("project", v)}
                 />
                 <MultiSelectFilter
                   label="Environment"
-                  options={ENVIRONMENTS}
+                  options={ENVIRONMENTS.map((e) => ({ id: e, name: e }))}
                   selected={filterInputs.environment}
                   onChange={(v) => updateFilterInput("environment", v)}
                 />
                 <MultiSelectFilter
                   label="Issue Type"
-                  options={issueTypeOptions}
+                  options={apiIssueTypes}
                   selected={filterInputs.issueType}
                   onChange={(v) => updateFilterInput("issueType", v)}
                 />
                 <MultiSelectFilter
                   label="Status"
-                  options={STATUS_FLOW}
+                  options={STATUS_FLOW.map((s) => ({ id: s, name: s }))}
                   selected={filterInputs.status}
                   onChange={(v) => updateFilterInput("status", v)}
                 />
                 <MultiSelectFilter
                   label="Stage"
-                  options={issueStageOptions}
+                  options={apiIssueStages}
                   selected={filterInputs.stage}
                   onChange={(v) => updateFilterInput("stage", v)}
                 />
                 <MultiSelectFilter
                   label="Root Cause"
-                  options={rootCauseOptions}
+                  options={apiRootCauseCats}
                   selected={filterInputs.rootCause}
                   onChange={(v) => updateFilterInput("rootCause", v)}
                 />
                 <MultiSelectFilter
                   label="Risks"
-                  options={riskOptions}
+                  options={apiRisks}
                   selected={filterInputs.risks}
                   onChange={(v) => updateFilterInput("risks", v)}
                 />
                 <MultiSelectFilter
                   label="Assignee"
-                  options={userOptions}
+                  options={apiUsers}
                   selected={filterInputs.assignees}
                   onChange={(v) => updateFilterInput("assignees", v)}
                 />
@@ -1844,6 +1780,7 @@ export default function IssueTracker() {
                 <th className="px-6 py-4">Title</th>
                 <th className="px-6 py-4 w-32">Reported</th>
                 <th className="px-6 py-4 w-32">By</th>
+                <th className="px-6 py-4 w-32">Assignee</th>
                 <th className="px-6 py-4 w-32">Project</th>
                 <th className="px-6 py-4 w-32">Env</th>
                 <th className="px-6 py-4 w-24">Risk</th>
@@ -1855,7 +1792,7 @@ export default function IssueTracker() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedIssues.map((issue) => (
+              {issues.map((issue) => (
                 <tr
                   key={issue.id}
                   onClick={() => openViewModal(issue.id)}
@@ -1865,15 +1802,20 @@ export default function IssueTracker() {
                     #{issue.id.slice(-4)}
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-sm font-normal text-slate-700 group-hover:text-indigo-600 transition-colors block w-48 truncate">
+                    <span className="text-sm font-normal text-slate-700 group-hover:text-indigo-600 transition-colors">
                       {issue.title}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-xs text-slate-500 font-mono">
-                    {new Date(issue.reportedAt).toLocaleDateString()}
+                    {issue.reportedAt
+                      ? new Date(issue.reportedAt).toLocaleDateString()
+                      : "-"}
                   </td>
                   <td className="px-6 py-4 text-xs text-slate-600">
                     {issue.reportedBy}
+                  </td>
+                  <td className="px-6 py-4 text-xs text-slate-600 font-medium">
+                    {issue.assignee || "-"}
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-600">
                     {issue.project}
@@ -1913,10 +1855,10 @@ export default function IssueTracker() {
                   </td>
                 </tr>
               ))}
-              {paginatedIssues.length === 0 && (
+              {issues.length === 0 && (
                 <tr>
                   <td
-                    colSpan={12}
+                    colSpan={13}
                     className="px-6 py-8 text-center text-slate-400 text-sm italic"
                   >
                     No issues found matching criteria.
@@ -1925,50 +1867,6 @@ export default function IssueTracker() {
               )}
             </tbody>
           </table>
-        </div>
-
-        {/* Mobile Card View */}
-        <div className="md:hidden divide-y divide-slate-100">
-          {paginatedIssues.map((issue) => (
-            <div
-              key={issue.id}
-              onClick={() => openViewModal(issue.id)}
-              className="p-4 active:bg-slate-50 transition-colors cursor-pointer"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <StatusBadge status={issue.status} />
-                <span className="text-xs text-slate-400 font-mono">
-                  #{issue.id.slice(-4)}
-                </span>
-              </div>
-              <h3 className="font-semibold text-slate-800 mb-1 line-clamp-2">
-                {issue.title}
-              </h3>
-              <div className="flex flex-wrap gap-2 mb-2">
-                <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-500">
-                  {issue.project}
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-500">
-                  {issue.issueType}
-                </span>
-                {issue.stage && (
-                  <span className="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-medium">
-                    {issue.stage}
-                  </span>
-                )}
-              </div>
-              <div className="flex justify-between items-end mt-2">
-                <span className="text-xs text-slate-500">
-                  {new Date(issue.reportedAt).toLocaleDateString()}
-                </span>
-              </div>
-            </div>
-          ))}
-          {paginatedIssues.length === 0 && (
-            <div className="p-8 text-center text-slate-400 text-sm italic">
-              No issues found matching criteria.
-            </div>
-          )}
         </div>
 
         {/* Pagination Controls */}
@@ -1991,14 +1889,10 @@ export default function IssueTracker() {
             </select>
             <span className="ml-2">
               {(pagination.page - 1) * pagination.limit + 1}-
-              {Math.min(
-                pagination.page * pagination.limit,
-                filteredIssues.length
-              )}{" "}
-              of {filteredIssues.length}
+              {Math.min(pagination.page * pagination.limit, totalData)} of{" "}
+              {totalData}
             </span>
           </div>
-
           <div className="flex items-center gap-2">
             <button
               onClick={() => handlePageChange(pagination.page - 1)}
@@ -2008,11 +1902,14 @@ export default function IssueTracker() {
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-xs font-medium text-slate-700">
-              Page {pagination.page} of {totalPages || 1}
+              Page {pagination.page} of{" "}
+              {Math.ceil(totalData / pagination.limit) || 1}
             </span>
             <button
               onClick={() => handlePageChange(pagination.page + 1)}
-              disabled={pagination.page >= totalPages}
+              disabled={
+                pagination.page >= Math.ceil(totalData / pagination.limit)
+              }
               className="p-1.5 rounded hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
@@ -2110,23 +2007,24 @@ export default function IssueTracker() {
                 {/* OVERVIEW TAB */}
                 {activeTab === "overview" && (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    {/* Left Column: Core Information */}
                     <div className="lg:col-span-2 space-y-6">
-                      {/* Details Grid */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Card title="Issue Details" icon={Briefcase}>
                           <div className="space-y-3">
                             <SearchableSingleSelect
                               required
                               label="Project"
-                              options={projectOptions}
-                              value={editingIssue.project}
-                              onChange={(v) => updateDraftField("project", v)}
+                              options={apiProjects}
+                              value={editingIssue.projectId}
+                              onChange={(v) => updateDraftField("projectId", v)}
                             />
                             <SearchableSingleSelect
                               required
                               label="Environment"
-                              options={ENVIRONMENTS}
+                              options={ENVIRONMENTS.map((e) => ({
+                                id: e,
+                                name: e,
+                              }))}
                               value={editingIssue.environment}
                               onChange={(v) =>
                                 updateDraftField("environment", v)
@@ -2135,9 +2033,11 @@ export default function IssueTracker() {
                             <SearchableSingleSelect
                               required
                               label="Issue Type"
-                              options={issueTypeOptions}
-                              value={editingIssue.issueType}
-                              onChange={(v) => updateDraftField("issueType", v)}
+                              options={apiIssueTypes}
+                              value={editingIssue.issueTypeId}
+                              onChange={(v) =>
+                                updateDraftField("issueTypeId", v)
+                              }
                             />
                           </div>
                         </Card>
@@ -2173,14 +2073,15 @@ export default function IssueTracker() {
                             </div>
                             <SearchableSingleSelect
                               label="Current Assignee"
-                              options={userOptions}
-                              value={editingIssue.assignee}
-                              onChange={(v) => updateDraftField("assignee", v)}
+                              options={apiUsers}
+                              value={editingIssue.assigneeId}
+                              onChange={(v) =>
+                                updateDraftField("assigneeId", v)
+                              }
                             />
                           </div>
                         </Card>
                       </div>
-
                       <Card title="Description" icon={FileText}>
                         <div className="space-y-4">
                           <div>
@@ -2217,7 +2118,6 @@ export default function IssueTracker() {
                           </div>
                         </div>
                       </Card>
-
                       <Card title="Analysis & Evidence" icon={Activity}>
                         <div className="space-y-4">
                           <div>
@@ -2237,10 +2137,10 @@ export default function IssueTracker() {
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <SearchableSingleSelect
                               label="Root Cause Category"
-                              options={rootCauseOptions}
-                              value={editingIssue.rootCauseCategory}
+                              options={apiRootCauseCats}
+                              value={editingIssue.rootCauseCategoryId}
                               onChange={(v) =>
-                                updateDraftField("rootCauseCategory", v)
+                                updateDraftField("rootCauseCategoryId", v)
                               }
                             />
                             <div>
@@ -2260,8 +2160,6 @@ export default function IssueTracker() {
                           </div>
                         </div>
                       </Card>
-
-                      {/* Comments - Hidden on Create */}
                       {!isCreating && (
                         <Card title="Discussion" icon={MessageSquare}>
                           <div className="space-y-4 max-h-60 overflow-y-auto mb-4">
@@ -2305,8 +2203,6 @@ export default function IssueTracker() {
                         </Card>
                       )}
                     </div>
-
-                    {/* Right Column: Meta, Risk, Resolution */}
                     <div className="space-y-6">
                       <Card title="Status & Stage" icon={Activity}>
                         <div className="space-y-4">
@@ -2319,19 +2215,18 @@ export default function IssueTracker() {
                           />
                           <SearchableSingleSelect
                             label="Issue Stage"
-                            options={issueStageOptions}
-                            value={editingIssue.stage}
+                            options={apiIssueStages}
+                            value={editingIssue.stageId}
                             onChange={(v) => updateStage(v)}
                           />
                         </div>
                       </Card>
-
                       <Card title="Risk Assessment" icon={ShieldAlert}>
                         <div className="space-y-4">
                           <RisksInput
                             selectedRisks={editingIssue.risks || []}
                             onChange={updateRisks}
-                            options={riskOptions}
+                            options={apiRisks}
                           />
                           <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
@@ -2346,7 +2241,6 @@ export default function IssueTracker() {
                           </div>
                         </div>
                       </Card>
-
                       <Card title="Final Resolution" icon={CheckCircle2}>
                         <div className="space-y-4">
                           <div>
@@ -2367,8 +2261,6 @@ export default function IssueTracker() {
                     </div>
                   </div>
                 )}
-
-                {/* ... other tabs (escalations, resolutions, history) remain same, just rendering them below ... */}
 
                 {/* ESCALATIONS TAB */}
                 {activeTab === "escalations" && (
@@ -2403,7 +2295,6 @@ export default function IssueTracker() {
                         Layer
                       </button>
                     </div>
-
                     <div className="space-y-4">
                       {editingIssue.escalations.length === 0 && (
                         <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300 text-slate-500">
@@ -2467,7 +2358,6 @@ export default function IssueTracker() {
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
-
                           <div>
                             <div className="flex items-center justify-between mb-3">
                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
@@ -2478,14 +2368,13 @@ export default function IssueTracker() {
                                   availableUsers={userOptions.filter(
                                     (u) =>
                                       !esc.stakeholders.some(
-                                        (s) => s.name === u
+                                        (s) => s.name === u.name
                                       )
                                   )}
-                                  onAdd={(user) => addStakeholder(esc.id, user)}
+                                  onAdd={(name) => addStakeholder(esc.id, name)}
                                 />
                               </div>
                             </div>
-
                             <div className="space-y-2">
                               {esc.stakeholders.length === 0 && (
                                 <p className="text-xs text-slate-400 italic">
@@ -2556,7 +2445,6 @@ export default function IssueTracker() {
                                 </div>
                               ))}
                             </div>
-
                             <div className="mt-6 pt-4 border-t border-slate-100">
                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">
                                 Result Remarks
@@ -2601,7 +2489,6 @@ export default function IssueTracker() {
                             rows={2}
                           />
                         </div>
-
                         <div>
                           <label className="block text-xs font-bold text-green-600 mb-1.5">
                             Pros
@@ -2645,7 +2532,6 @@ export default function IssueTracker() {
                         </div>
                       </form>
                     </Card>
-
                     <div className="grid grid-cols-1 gap-6">
                       {editingIssue.resolutions.map((res) => (
                         <div
@@ -2708,7 +2594,6 @@ export default function IssueTracker() {
                               )}
                             </button>
                           </div>
-
                           <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
                             <div className="space-y-1">
                               <h5 className="font-bold text-green-700 uppercase text-[10px] tracking-wide">

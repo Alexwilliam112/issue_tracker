@@ -140,6 +140,7 @@ const PrettySelect = ({
 const AutoTextArea = ({
   value,
   onChange,
+  onBlur,
   className,
   placeholder,
   minRows = 1,
@@ -159,6 +160,7 @@ const AutoTextArea = ({
       ref={textAreaRef}
       value={value}
       onChange={onChange}
+      onBlur={onBlur}
       placeholder={placeholder}
       className={`w-full bg-transparent border border-transparent hover:border-slate-200 focus:border-indigo-300 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 rounded-lg transition-all outline-none resize-none p-2 -ml-2 ${className}`}
       rows={minRows}
@@ -464,12 +466,12 @@ const SearchableSingleSelect = ({
                     key={opt.id}
                     onClick={() => handleSelect(opt)}
                     className={`w-full text-left px-3 py-2 text-sm rounded flex items-center justify-between group
-                                        ${
-                                          value === opt.id
-                                            ? "bg-indigo-50 text-indigo-700 font-bold"
-                                            : "text-slate-700 hover:bg-slate-50"
-                                        }
-                                    `}
+                                                ${
+                                                  value === opt.id
+                                                    ? "bg-indigo-50 text-indigo-700 font-bold"
+                                                    : "text-slate-700 hover:bg-slate-50"
+                                                }
+                                            `}
                   >
                     <span>{opt.name}</span>
                     {value === opt.id && (
@@ -546,7 +548,8 @@ const UserSearchSelect = ({ availableUsers, onAdd }) => {
   );
 
   const handleAdd = (user) => {
-    onAdd(user.name); // Keeping logic simple for now (storing name for stakeholders), ideally ID
+    // Pass full user object
+    onAdd(user);
     setSearchTerm("");
     inputRef.current?.focus();
   };
@@ -971,10 +974,6 @@ export default function IssueTracker() {
           id: apiIssue.ids, // Use string ID from API
           title: apiIssue.name,
           status: apiIssue.status,
-          // Map object responses to IDs for internal logic, but store full objects if needed for display?
-          // For simplicity, we map to what UI expects (IDs for editing, but we need Names for table).
-          // Strategy: Store Object for Table, use IDs for edit form.
-          // Actually, the table just needs strings.
           project: apiIssue.project_id?.name || "",
           projectId: apiIssue.project_id?.id,
 
@@ -1027,6 +1026,46 @@ export default function IssueTracker() {
     if (isMounted) fetchIssues();
   }, [isMounted, pagination, appliedFilters, searchTerm]);
 
+  // --- Escalation Integration Logic ---
+
+  const fetchEscalations = async (issueId) => {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/issues/escalations/index?id_issue=${issueId}`
+      );
+      const json = await res.json();
+      if (json.code === 200) {
+        const escalations = json.data.map((esc, index) => ({
+          id: esc.ids,
+          layer: index + 1,
+          status: esc.status === "DONE" ? "Done" : "Pending",
+          remarks: esc.result_remarks || "",
+          stakeholders: (esc.user_ids || []).map((u, idx) => ({
+            id: u.id,
+            name: u.name,
+            isDecisionMaker: idx === 0, // Assume first user is owner/decision maker for UI
+          })),
+        }));
+
+        setEditingIssue((prev) =>
+          prev ? { ...prev, escalations: escalations } : null
+        );
+      }
+    } catch (err) {
+      console.error("Failed to fetch escalations", err);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      activeTab === "escalations" &&
+      editingIssue &&
+      editingIssue.id !== "new"
+    ) {
+      fetchEscalations(editingIssue.id);
+    }
+  }, [activeTab, editingIssue?.id]);
+
   if (!isMounted) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -1074,7 +1113,6 @@ export default function IssueTracker() {
   };
 
   // --- Status Summary Counts (Note: Client side count is inaccurate with server pagination, would ideally come from API stats) ---
-  // For now, we just count what's visible or leave as 0 if not provided by API summary endpoint
   const statusCounts = { Open: 0, "In Process": 0, Resolved: 0 };
 
   // --- Actions ---
@@ -1196,36 +1234,81 @@ export default function IssueTracker() {
   };
 
   // --- Nested Tab Handlers (Escalation, Resolution, Comments) ---
-  // Currently client-side only as requested, will reset on refresh until backend supports them.
 
-  const addEscalationLayer = () => {
-    if (!editingIssue) return;
-    const layerNum = editingIssue.escalations.length + 1;
-    const newLayer = {
-      id: Date.now(),
-      layer: layerNum,
-      stakeholders: [],
-      status: "Pending",
-      remarks: "",
-    };
-    setEditingIssue((prev) =>
-      prev ? { ...prev, escalations: [...prev.escalations, newLayer] } : null
-    );
+  // --- ESCALATION API INTEGRATION ---
+
+  const addEscalationLayer = async () => {
+    if (!editingIssue || editingIssue.id === "new") return;
+    try {
+      const res = await fetch(
+        `${BASE_URL}/issues/escalations/create?id_issue=${editingIssue.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      if (res.ok) {
+        fetchEscalations(editingIssue.id);
+      } else {
+        alert("Failed to create escalation layer");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error creating escalation layer");
+    }
+  };
+
+  const handleUpdateEscalation = async (
+    escalationId,
+    status,
+    remarks,
+    stakeholders
+  ) => {
+    // Convert stakeholders array to expected user_ids payload format
+    const userIdsPayload = stakeholders.map((s) => ({
+      id: s.id,
+      name: s.name,
+    }));
+
+    try {
+      const res = await fetch(
+        `${BASE_URL}/issues/escalations/update?id_escalation=${escalationId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: status === "Done" ? "DONE" : "PENDING",
+            result_remarks: remarks,
+            user_ids: userIdsPayload,
+          }),
+        }
+      );
+      if (res.ok) {
+        fetchEscalations(editingIssue.id);
+      } else {
+        console.error("Failed to update escalation");
+      }
+    } catch (e) {
+      console.error("Error updating escalation", e);
+    }
   };
 
   const updateEscalationStatus = (layerId, newStatus) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.map((e) =>
-          e.id === layerId ? { ...e, status: newStatus } : e
-        ),
-      };
-    });
+    const esc = editingIssue.escalations.find((e) => e.id === layerId);
+    if (!esc) return;
+    // Optimistic update
+    setEditingIssue((prev) => ({
+      ...prev,
+      escalations: prev.escalations.map((e) =>
+        e.id === layerId ? { ...e, status: newStatus } : e
+      ),
+    }));
+    handleUpdateEscalation(layerId, newStatus, esc.remarks, esc.stakeholders);
   };
 
   const updateEscalationRemarks = (layerId, newRemarks) => {
+    // Only update local state for smooth typing
     setEditingIssue((prev) => {
       if (!prev) return null;
       return {
@@ -1237,73 +1320,92 @@ export default function IssueTracker() {
     });
   };
 
-  const deleteEscalationLayer = (layerId) => {
-    if (!confirm("Delete this escalation layer?")) return;
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.filter((e) => e.id !== layerId),
-      };
-    });
+  const saveRemarksOnBlur = (layerId) => {
+    const esc = editingIssue.escalations.find((e) => e.id === layerId);
+    if (esc) {
+      handleUpdateEscalation(
+        layerId,
+        esc.status,
+        esc.remarks,
+        esc.stakeholders
+      );
+    }
   };
 
-  const addStakeholder = (layerId, userName) => {
-    if (!userName) return;
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.map((layer) => {
-          if (layer.id !== layerId) return layer;
-          if (layer.stakeholders.some((s) => s.name === userName)) return layer;
-          const isFirst = layer.stakeholders.length === 0;
-          return {
-            ...layer,
-            stakeholders: [
-              ...layer.stakeholders,
-              { name: userName, isDecisionMaker: isFirst },
-            ],
-          };
-        }),
-      };
-    });
+  const deleteEscalationLayer = (layerId) => {
+    alert(
+      "Deletion of escalation layers is not supported by the API at this time."
+    );
+  };
+
+  const addStakeholder = (layerId, userObj) => {
+    if (!userObj) return;
+    const esc = editingIssue.escalations.find((e) => e.id === layerId);
+    if (!esc) return;
+
+    if (esc.stakeholders.some((s) => s.id === userObj.id)) return;
+
+    // Optimistic update
+    const newStakeholders = [
+      ...esc.stakeholders,
+      { id: userObj.id, name: userObj.name, isDecisionMaker: false },
+    ];
+
+    // If it was empty, make first one decision maker implicitly (for API logic mostly)
+    if (newStakeholders.length === 1) newStakeholders[0].isDecisionMaker = true;
+
+    setEditingIssue((prev) => ({
+      ...prev,
+      escalations: prev.escalations.map((e) =>
+        e.id === layerId ? { ...e, stakeholders: newStakeholders } : e
+      ),
+    }));
+
+    handleUpdateEscalation(layerId, esc.status, esc.remarks, newStakeholders);
   };
 
   const removeStakeholder = (layerId, userName) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.map((layer) => {
-          if (layer.id !== layerId) return layer;
-          return {
-            ...layer,
-            stakeholders: layer.stakeholders.filter((s) => s.name !== userName),
-          };
-        }),
-      };
-    });
+    const esc = editingIssue.escalations.find((e) => e.id === layerId);
+    if (!esc) return;
+
+    const newStakeholders = esc.stakeholders.filter((s) => s.name !== userName);
+
+    setEditingIssue((prev) => ({
+      ...prev,
+      escalations: prev.escalations.map((e) =>
+        e.id === layerId ? { ...e, stakeholders: newStakeholders } : e
+      ),
+    }));
+
+    handleUpdateEscalation(layerId, esc.status, esc.remarks, newStakeholders);
   };
 
   const setDecisionMaker = (layerId, userName) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        escalations: prev.escalations.map((layer) => {
-          if (layer.id !== layerId) return layer;
-          return {
-            ...layer,
-            stakeholders: layer.stakeholders.map((s) => ({
-              ...s,
-              isDecisionMaker: s.name === userName,
-            })),
-          };
-        }),
-      };
-    });
+    const esc = editingIssue.escalations.find((e) => e.id === layerId);
+    if (!esc) return;
+
+    const newStakeholders = esc.stakeholders.map((s) => ({
+      ...s,
+      isDecisionMaker: s.name === userName,
+    }));
+
+    // Sort decision maker to top for API consistency if needed, or just update local
+    const sorted = [
+      ...newStakeholders.filter((s) => s.isDecisionMaker),
+      ...newStakeholders.filter((s) => !s.isDecisionMaker),
+    ];
+
+    setEditingIssue((prev) => ({
+      ...prev,
+      escalations: prev.escalations.map((e) =>
+        e.id === layerId ? { ...e, stakeholders: sorted } : e
+      ),
+    }));
+
+    handleUpdateEscalation(layerId, esc.status, esc.remarks, sorted);
   };
+
+  // --- End Escalation Integration Logic ---
 
   const addResolution = (e) => {
     e.preventDefault();
@@ -2371,7 +2473,7 @@ export default function IssueTracker() {
                                         (s) => s.name === u.name
                                       )
                                   )}
-                                  onAdd={(name) => addStakeholder(esc.id, name)}
+                                  onAdd={(user) => addStakeholder(esc.id, user)}
                                 />
                               </div>
                             </div>
@@ -2457,6 +2559,7 @@ export default function IssueTracker() {
                                     e.target.value
                                   )
                                 }
+                                onBlur={() => saveRemarksOnBlur(esc.id)}
                                 className="text-sm text-slate-700 w-full bg-slate-50 rounded p-2"
                                 placeholder="Add remarks about the outcome of this escalation layer..."
                                 minRows={2}

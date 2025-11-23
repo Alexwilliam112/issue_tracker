@@ -1067,6 +1067,43 @@ export default function IssueTracker() {
     }
   }, [activeTab, editingIssue?.id]);
 
+  // --- Resolution Integration Logic ---
+
+  const fetchResolutions = async (issueId) => {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/issues/resolutions/index?id_issue=${issueId}`
+      );
+      const json = await res.json();
+      if (json.code === 200) {
+        const resolutions = json.data.map((res) => ({
+          id: res.ids,
+          solution: res.proposed_solution,
+          pros: res.pros,
+          cons: res.cons,
+          effort: res.effort,
+          isAgreed: res.status === "AGREED",
+        }));
+
+        setEditingIssue((prev) =>
+          prev ? { ...prev, resolutions: resolutions } : null
+        );
+      }
+    } catch (err) {
+      console.error("Failed to fetch resolutions", err);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      activeTab === "resolutions" &&
+      editingIssue &&
+      editingIssue.id !== "new"
+    ) {
+      fetchResolutions(editingIssue.id);
+    }
+  }, [activeTab, editingIssue?.id]);
+
   if (!isMounted) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -1438,25 +1475,65 @@ export default function IssueTracker() {
     handleUpdateEscalation(layerId, esc.status, esc.remarks, sorted);
   };
 
-  // --- End Escalation Integration Logic ---
+  // --- Resolution Integration Logic ---
 
-  const addResolution = (e) => {
+  const addResolution = async (e) => {
     e.preventDefault();
-    if (!editingIssue) return;
+    if (!editingIssue || editingIssue.id === "new") return;
     const formData = new FormData(e.target);
-    const newRes = {
-      id: Date.now(),
-      solution: formData.get("solution"),
+
+    const payload = {
+      proposed_solution: formData.get("solution"),
       pros: formData.get("pros"),
       cons: formData.get("cons"),
-      concerns: formData.get("concerns"),
       effort: parseInt(formData.get("effort") || 0, 10),
-      isAgreed: false,
     };
-    setEditingIssue((prev) =>
-      prev ? { ...prev, resolutions: [...prev.resolutions, newRes] } : null
-    );
-    e.target.reset();
+
+    try {
+      const res = await fetch(
+        `${BASE_URL}/issues/resolutions/create?id_issue=${editingIssue.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (res.ok) {
+        fetchResolutions(editingIssue.id);
+        e.target.reset();
+      } else {
+        alert("Failed to add resolution");
+      }
+    } catch (e) {
+      console.error("Error adding resolution", e);
+    }
+  };
+
+  const handleUpdateResolution = async (resId, updatedData) => {
+    try {
+      const payload = {
+        proposed_solution: updatedData.solution,
+        pros: updatedData.pros,
+        cons: updatedData.cons,
+        effort: updatedData.effort,
+        status: updatedData.isAgreed ? "AGREED" : "PROPOSAL",
+      };
+
+      const res = await fetch(
+        `${BASE_URL}/issues/resolutions/update?id_resolution=${resId}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!res.ok) {
+        console.error("Failed to update resolution");
+      }
+    } catch (e) {
+      console.error("Error updating resolution", e);
+    }
   };
 
   const updateResolution = (resId, field, value) => {
@@ -1471,28 +1548,54 @@ export default function IssueTracker() {
     });
   };
 
-  const toggleAgreement = (resId) => {
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        resolutions: prev.resolutions.map((r) => ({
-          ...r,
-          isAgreed: r.id === resId ? !r.isAgreed : false,
-        })),
-      };
-    });
+  const saveResolutionOnBlur = (resId) => {
+    const res = editingIssue.resolutions.find((r) => r.id === resId);
+    if (res) {
+      handleUpdateResolution(resId, res);
+    }
   };
 
-  const deleteResolution = (resId) => {
+  const toggleAgreement = (resId) => {
+    const res = editingIssue.resolutions.find((r) => r.id === resId);
+    if (!res) return;
+
+    const updatedRes = { ...res, isAgreed: !res.isAgreed };
+
+    // Optimistic update
+    setEditingIssue((prev) => ({
+      ...prev,
+      resolutions: prev.resolutions.map(
+        (r) => (r.id === resId ? updatedRes : { ...r, isAgreed: false }) // Assuming only one can be agreed, or remove the logic to set others to false if multiple agreements are allowed
+      ),
+    }));
+
+    handleUpdateResolution(resId, updatedRes);
+  };
+
+  const deleteResolution = async (resId) => {
     if (!confirm("Delete this resolution proposal?")) return;
-    setEditingIssue((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        resolutions: prev.resolutions.filter((r) => r.id !== resId),
-      };
-    });
+
+    try {
+      const res = await fetch(`${BASE_URL}/issues/resolutions/delete`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: resId }),
+      });
+
+      if (res.ok) {
+        setEditingIssue((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            resolutions: prev.resolutions.filter((r) => r.id !== resId),
+          };
+        });
+      } else {
+        alert("Failed to delete resolution");
+      }
+    } catch (e) {
+      console.error("Error deleting resolution", e);
+    }
   };
 
   const addComment = (e) => {
@@ -2706,6 +2809,7 @@ export default function IssueTracker() {
                                       e.target.value
                                     )
                                   }
+                                  onBlur={() => saveResolutionOnBlur(res.id)}
                                   className="font-bold text-slate-800 text-lg bg-transparent w-full border-none focus:ring-0 px-0 py-0"
                                   placeholder="Solution title..."
                                 />
@@ -2742,6 +2846,7 @@ export default function IssueTracker() {
                                     e.target.value
                                   )
                                 }
+                                onBlur={() => saveResolutionOnBlur(res.id)}
                                 className="text-slate-700 bg-transparent w-full text-sm"
                                 placeholder="Pros..."
                               />
@@ -2759,6 +2864,7 @@ export default function IssueTracker() {
                                     e.target.value
                                   )
                                 }
+                                onBlur={() => saveResolutionOnBlur(res.id)}
                                 className="text-slate-700 bg-transparent w-full text-sm"
                                 placeholder="Cons..."
                               />
@@ -2778,6 +2884,7 @@ export default function IssueTracker() {
                                       parseInt(e.target.value)
                                     )
                                   }
+                                  onBlur={() => saveResolutionOnBlur(res.id)}
                                   className="inline-block px-2 py-1 bg-slate-100 border border-slate-200 rounded text-slate-700 font-bold text-xs w-20"
                                 />
                               </div>

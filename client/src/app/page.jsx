@@ -193,13 +193,15 @@ const AutoTextArea = ({ value, onChange, className, placeholder, minRows = 1 }) 
   );
 };
 
-// --- Multi-Select Filter Component ---
+// --- Multi-Select Filter Component (Searchable) ---
 
 const MultiSelectFilter = ({ options, selected, onChange, label, placeholder = "Filter..." }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState("");
     const [coords, setCoords] = useState({ top: 0, left: 0 });
     const wrapperRef = useRef(null);
     const dropdownRef = useRef(null);
+    const inputRef = useRef(null);
 
     const toggleOpen = () => {
         if (!isOpen && wrapperRef.current) {
@@ -208,9 +210,17 @@ const MultiSelectFilter = ({ options, selected, onChange, label, placeholder = "
                 top: rect.bottom + 4,
                 left: rect.left,
             });
+            setSearchTerm("");
         }
         setIsOpen(!isOpen);
     };
+
+    // Auto-focus input when opened
+    useEffect(() => {
+        if (isOpen && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [isOpen]);
 
     useEffect(() => {
         function handleClickOutside(event) {
@@ -243,6 +253,8 @@ const MultiSelectFilter = ({ options, selected, onChange, label, placeholder = "
         }
     };
 
+    const filteredOptions = options.filter(opt => opt.toLowerCase().includes(searchTerm.toLowerCase()));
+
     return (
         <div ref={wrapperRef} className="relative inline-block w-full md:w-auto">
              {label && <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">{label}</label>}
@@ -268,24 +280,42 @@ const MultiSelectFilter = ({ options, selected, onChange, label, placeholder = "
                         position: 'fixed',
                         top: coords.top,
                         left: coords.left,
-                        width: 200,
+                        width: 240,
                         zIndex: 9999
                     }}
-                    className="bg-white rounded-lg shadow-xl border border-slate-200 max-h-60 overflow-y-auto animate-in fade-in zoom-in-95 duration-100"
+                    className="bg-white rounded-lg shadow-xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-100 flex flex-col"
                 >
-                    {options.map(opt => (
-                        <button
-                            key={opt}
-                            onClick={() => toggleOption(opt)}
-                            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
-                        >
-                            {selected.includes(opt) 
-                                ? <CheckSquare className="w-4 h-4 text-indigo-600" />
-                                : <Square className="w-4 h-4 text-slate-300" />
-                            }
-                            <span className="truncate">{opt}</span>
-                        </button>
-                    ))}
+                    <div className="p-2 border-b border-slate-100 bg-slate-50 sticky top-0 z-10">
+                        <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                            <input 
+                                ref={inputRef}
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Search..."
+                                className="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </div>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto">
+                        {filteredOptions.length === 0 ? (
+                            <div className="text-xs text-slate-400 text-center py-3">No matches found</div>
+                        ) : (
+                            filteredOptions.map(opt => (
+                                <button
+                                    key={opt}
+                                    onClick={() => toggleOption(opt)}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700 transition-colors"
+                                >
+                                    {selected.includes(opt) 
+                                        ? <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+                                        : <Square className="w-4 h-4 text-slate-300 shrink-0" />
+                                    }
+                                    <span className="truncate">{opt}</span>
+                                </button>
+                            ))
+                        )}
+                    </div>
                 </div>,
                 document.body
             )}
@@ -742,8 +772,12 @@ export default function IssueTracker() {
       status: [],
       stage: [],
       rootCause: [],
+      risks: [],
+      assignees: [],
       startDate: '',
-      endDate: ''
+      endDate: '',
+      resolvedStartDate: '',
+      resolvedEndDate: ''
   };
   
   const [searchTerm, setSearchTerm] = useState('');
@@ -798,6 +832,10 @@ export default function IssueTracker() {
     const statusMatch = appliedFilters.status.length === 0 || appliedFilters.status.includes(i.status);
     const stageMatch = appliedFilters.stage.length === 0 || appliedFilters.stage.includes(i.stage);
     const rootMatch = appliedFilters.rootCause.length === 0 || appliedFilters.rootCause.includes(i.rootCauseCategory);
+    
+    // New filters
+    const riskMatch = appliedFilters.risks.length === 0 || (i.risks && i.risks.some(r => appliedFilters.risks.includes(r)));
+    const assigneeMatch = appliedFilters.assignees.length === 0 || appliedFilters.assignees.includes(i.assignee);
 
     // 3. Date Range (Applied)
     let dateMatch = true;
@@ -807,8 +845,17 @@ export default function IssueTracker() {
     if (appliedFilters.endDate) {
         dateMatch = dateMatch && new Date(i.reportedAt) <= new Date(appliedFilters.endDate);
     }
+    
+    // Resolved Date Range
+    let resolvedDateMatch = true;
+    if (appliedFilters.resolvedStartDate) {
+        resolvedDateMatch = resolvedDateMatch && i.closedAt && new Date(i.closedAt) >= new Date(appliedFilters.resolvedStartDate);
+    }
+    if (appliedFilters.resolvedEndDate) {
+        resolvedDateMatch = resolvedDateMatch && i.closedAt && new Date(i.closedAt) <= new Date(appliedFilters.resolvedEndDate);
+    }
 
-    return searchMatch && projectMatch && envMatch && typeMatch && statusMatch && stageMatch && rootMatch && dateMatch;
+    return searchMatch && projectMatch && envMatch && typeMatch && statusMatch && stageMatch && rootMatch && riskMatch && assigneeMatch && dateMatch && resolvedDateMatch;
   });
 
   // --- Pagination Logic ---
@@ -1249,9 +1296,9 @@ export default function IssueTracker() {
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-colors ${showFilters ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-300 text-slate-600'}`}
                 >
                     <Filter className="w-4 h-4" /> Filters 
-                    {(appliedFilters.project.length + appliedFilters.environment.length + appliedFilters.issueType.length + appliedFilters.status.length + appliedFilters.stage.length + appliedFilters.rootCause.length + (appliedFilters.startDate ? 1 : 0)) > 0 && (
+                    {(appliedFilters.project.length + appliedFilters.environment.length + appliedFilters.issueType.length + appliedFilters.status.length + appliedFilters.stage.length + appliedFilters.rootCause.length + appliedFilters.risks.length + appliedFilters.assignees.length + (appliedFilters.startDate ? 1 : 0) + (appliedFilters.resolvedStartDate ? 1 : 0)) > 0 && (
                         <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                            {appliedFilters.project.length + appliedFilters.environment.length + appliedFilters.issueType.length + appliedFilters.status.length + appliedFilters.stage.length + appliedFilters.rootCause.length + (appliedFilters.startDate ? 1 : 0)}
+                            {appliedFilters.project.length + appliedFilters.environment.length + appliedFilters.issueType.length + appliedFilters.status.length + appliedFilters.stage.length + appliedFilters.rootCause.length + appliedFilters.risks.length + appliedFilters.assignees.length + (appliedFilters.startDate ? 1 : 0) + (appliedFilters.resolvedStartDate ? 1 : 0)}
                         </span>
                     )}
                 </button>
@@ -1266,11 +1313,21 @@ export default function IssueTracker() {
                         <MultiSelectFilter label="Status" options={STATUS_FLOW} selected={filterInputs.status} onChange={v => updateFilterInput('status', v)} />
                         <MultiSelectFilter label="Stage" options={ISSUE_STAGES} selected={filterInputs.stage} onChange={v => updateFilterInput('stage', v)} />
                         <MultiSelectFilter label="Root Cause" options={ROOT_CAUSE_CATS} selected={filterInputs.rootCause} onChange={v => updateFilterInput('rootCause', v)} />
+                        <MultiSelectFilter label="Risks" options={RISK_OPTIONS} selected={filterInputs.risks} onChange={v => updateFilterInput('risks', v)} />
+                        <MultiSelectFilter label="Assignee" options={MOCK_USERS} selected={filterInputs.assignees} onChange={v => updateFilterInput('assignees', v)} />
+                        
                         <div className="flex flex-col col-span-1 md:col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Date Range (Reported)</label>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Reported Date</label>
                             <div className="flex gap-2">
                                 <input type="date" value={filterInputs.startDate} onChange={e => updateFilterInput('startDate', e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm" />
                                 <input type="date" value={filterInputs.endDate} onChange={e => updateFilterInput('endDate', e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm" />
+                            </div>
+                        </div>
+                        <div className="flex flex-col col-span-1 md:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Resolved Date</label>
+                            <div className="flex gap-2">
+                                <input type="date" value={filterInputs.resolvedStartDate} onChange={e => updateFilterInput('resolvedStartDate', e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm" />
+                                <input type="date" value={filterInputs.resolvedEndDate} onChange={e => updateFilterInput('resolvedEndDate', e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-2 text-sm" />
                             </div>
                         </div>
                     </div>
